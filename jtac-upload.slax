@@ -1,0 +1,223 @@
+#!/usr/libexec/ui/cscript
+version 1.1;
+
+ns junos = "http://xml.juniper.net/junos/*/rpc";
+ns xnm  = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs  = "http://xml.juniper.net/junos/commit-scripts/1.0";
+
+import "../import/junos.xsl";
+
+match / {
+<op-script-results> {
+
+    /* --- Step 0: Inputs --- */
+    mvar $case_answer = "";
+    mvar $case = "no";
+    mvar $done = false();
+    while (!$done) {
+        set $case_answer = jcs:get-input("Enter JTAC Case Number (format: nnnn-nnnn-nnnnnn), or press Enter for none:");
+        set $case_answer = normalize-space($case_answer);
+        if (string-length($case_answer) = 0) {
+            set $case = "no";
+            set $done = true();
+        } else if (jcs:regex("[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]", $case_answer)) {
+            set $case = $case_answer;
+            set $done = true();
+        } else {
+            expr jcs:output("Invalid format. Please enter JTAC Case Number as nnnn-nnnn-nnnnnn.");
+        }
+    }
+
+    /* Get keep option */
+    mvar $keep_answer = "";
+    mvar $keep = "no";
+    mvar $keep_done = false();
+    if ($case = "no") {
+        set $keep = "yes";
+    } else {
+        while (!$keep_done) {
+            set $keep_answer = jcs:get-input("Keep local copies of RSI and log archive after upload? (y/n) [n]:");
+            if (($keep_answer = "y") or ($keep_answer = "n") or (string-length($keep_answer) = 0)) {
+                if ($keep_answer = "y") {
+                    set $keep = "yes";
+                } else {
+                    set $keep = "no";
+                }
+                set $keep_done = true();
+            } else {
+                expr jcs:output("Please enter 'y' or 'n'.");
+            }
+        }
+    }
+
+    /* --- Step 1: Hostname and date --- */
+    var $hostname_answer = jcs:sysctl("kern.hostname", "s");
+    var $hostname = {
+        if(string-length($hostname_answer) > 0) { <output> $hostname_answer; }
+        else { <output> "amnesiac"; }
+    }
+    var $jnx = jcs:open();
+    var $rpc_date = {
+        <request-shell-execute> {
+            <command> "date +%Y-%m-%d_%H%M";
+        }
+    };
+
+    var $date_result = jcs:execute($jnx, $rpc_date);
+    var $date_str = {
+        if(string-length($date_result) > 0) { <output> normalize-space(string($date_result)); }
+        else { <output> "1999"; }
+    };
+
+    /* For Debug 
+    expr jcs:output("System Hostname: " _ $hostname);
+    expr jcs:output("JTAC Case: " _ $case);
+    expr jcs:output("Keep files? " _ $keep);
+    expr jcs:output("DatStamp: " _ $date_str);
+    */
+
+    /* Declaring Filenames */
+    var $rsi_file = "/var/tmp/RSI_" _ $hostname _ "_" _ $date_str _ ".log";
+    var $log_file = "/var/tmp/LOGS_" _ $hostname _ "_" _ $date_str _ ".tgz";
+
+    /* --- Step 2: Collect RSI --- */
+    expr jcs:output("Collecting RSI data, please wait ~10-30mins ...");
+    /* var $get_rsi_cmd = { <command> "request support information | save " _ $rsi_file; } */
+    /* Using file-put instead of piping save to avoid file write issues */
+    var $get_rsi_cmd = { <command> "request support information"; }
+    var $rsi_cmd_output = jcs:invoke($get_rsi_cmd);
+    var $fileput = {
+        <file-put> {
+            <filename>$rsi_file;
+            <encoding> 'ascii';
+            <permission> '0644';
+            <delete-if-exist>; 
+            <file-contents>$rsi_cmd_output;
+        }
+    };
+    expr jcs:invoke($fileput);
+    expr jcs:output("RSI collected: " _ $rsi_file);
+
+    /* --- Step 3: Archive Logs --- */
+    expr jcs:output("Archiving system logs...");
+    var $archive_rpc = { <file-archive> {
+        <compress>;
+        <source> "/var/log/*";
+        <destination> $log_file;
+    } }
+    var $archive_result = jcs:invoke($archive_rpc);
+    expr jcs:output("Logs archived: " _ $log_file);
+
+    /* --- Step 4: Prepare SFTP upload --- TODO: Currently disabled --- */
+    if ($case = "no") {
+        expr jcs:output("No JTAC case number provided, skipping upload step.");
+        var $message_no_case = "RSI and logs collected from " _ $hostname _ ", no JTAC case provided, files stored locally.";
+        var $SYSLOG_NO_CASE = "interact.warn";
+        var $SYSLOG_TAG_NO_CASE = "NOTICE: ";
+        expr jcs:syslog( $SYSLOG_NO_CASE, $SYSLOG_TAG_NO_CASE, $message_no_case );
+        <output> {
+            <status> $message_no_case;
+        }
+    }
+    else {
+        /* 
+        expr jcs:output("Preparing to upload files to JTAC case " _ $case _ " ...");
+
+        var $upload_script = "/var/tmp/upload_" _ $case _ ".txt";
+        var $echo_cmd = {
+            <request-shell-execute> {
+                <command> "echo 'mkdir pub/incoming/" _ $case _ "' > " _ $upload_script
+                    _ " ; echo 'cd pub/incoming/" _ $case _ "' >> " _ $upload_script
+                    _ " ; echo 'put " _ $rsi_file _ "' >> " _ $upload_script
+                    _ " ; echo 'put " _ $log_file _ "' >> " _ $upload_script
+                    _ " ; echo 'bye' >> " _ $upload_script;
+            }
+        };
+        expr jcs:execute($jnx, $echo_cmd);
+        
+        var $upload_script = "/var/tmp/upload_" _ $case _ ".txt";
+        var $script_text = "mkdir pub/incoming/" _ $case _ "\n"
+                        _ "cd pub/incoming2/" _ $case _ "\n"
+                        _ "put " _ $rsi_file _ "\n"
+                        _ "put " _ $log_file _ "\n"
+                        _ "bye\n";
+
+        var $echo_cmd = {
+            <request-shell-execute> {
+                <command> "echo \"" _ $script_text _ "\" > " _ $upload_script;
+            }
+        };
+        expr jcs:execute($jnx, $echo_cmd);
+        expr jcs:output("Upload script created: " _ $upload_script);
+        
+        var $sftp_cmd = {
+            <request-shell-execute> {
+                <command> "sftp -o StrictHostKeyChecking=no jtac@sftp.juniper.net -b " _ $upload_script;
+            }
+        }; */
+        /*
+        var $upload_script = " << EOF\n"
+                _ "mkdir pub/incoming/" _ $case _ "\n"
+                _ "cd pub/incoming2/" _ $case _ "\n"
+                _ "put " _ $rsi_file _ "\n"
+                _ "put " _ $log_file _ "\n"
+                _ "bye\n"
+                _ "EOF";
+        
+        var $sftp_cmd = {
+            <request-shell-execute> {
+                <command> "sftp -o StrictHostKeyChecking=no juniper@172.31.123.199" 
+                _ $upload_script;
+            }
+        };
+        
+        expr jcs:execute($jnx, $sftp_cmd);
+
+        expr jcs:output("Files uploaded successfully."); */
+
+        expr jcs:output("FTP not automated yet... Enter the following commands into JunOS Cli...\n"
+                        _ "Please copy and past one line at a time, pasting all line will cause commands to execute/wait in your current shell.\n"
+                        _ "---NOTE: jtac SFTP Password is 'anonymous'---\n"
+                        _ "---------------------------------------------\n");
+
+        var $sftp_cmd = "sftp jtac@sftp.juniper.net\n"
+                _ "mkdir pub/incoming/" _ $case _ "\n"
+                _ "cd pub/incoming/" _ $case _ "\n"
+                _ "put " _ $rsi_file _ "\n"
+                _ "put " _ $log_file _ "\n"
+                _ "bye\n";
+
+        expr jcs:output($sftp_cmd
+                        _ "---------------------------------------------\n");
+
+        set $keep = "yes";  /* Force keep if manual upload */
+    }
+
+    /* --- Step 5: Optional Cleanup --- */
+   
+    if($keep != "yes") {
+        expr jcs:output("Cleaning up temporary files...");
+        var $del_rsi = { <file-delete> { <path> $rsi_file; } }
+        var $del_log = { <file-delete> { <path> $log_file; } }
+        /* var $del_batch = { <file-delete> { <path> $upload_script; } } */
+
+        expr jcs:invoke($del_rsi);
+        expr jcs:invoke($del_log);
+        /* expr jcs:invoke($del_batch);*/ 
+
+        expr jcs:output("Cleanup complete.");
+    } else {
+        expr jcs:output("Keeping local copies of RSI, logs as requested.");
+    }
+    expr jcs:close($jnx);
+
+    /* --- Step 6: Final status --- */
+    var $message = "RSI and logs collected from " _ $hostname _ ", uploaded to JTAC case " _ $case;
+    var $SYSLOG = "interact.warn";
+    var $SYSLOG_TAG = "NOTICE: ";
+    expr jcs:syslog( $SYSLOG, $SYSLOG_TAG, $message );
+    <output> {
+        <status> $message;
+    }
+}
+}
