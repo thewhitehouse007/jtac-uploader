@@ -6,7 +6,8 @@ You may have SSH access via a jump host, Mist Cloud (Outbound-SSH) or direct, bu
 This script is designed as a single command to perform the folloing actions
 1. Collect the RSI and store it in a local file
 2. Package the /var/log/ directory into a file ready for upload
-3. Using SFTP to upload the files to the Provided Case folder at JTAC (Work in Progress)
+3. Provide instructions for manually uploading file to JTAC Case
+4. <i>Using SFTP to upload the files to the Provided Case folder at JTAC (Work in Progress)</i>
 
 ## Execution
 To run the script, on any Internet connected Juniper Device...
@@ -17,7 +18,6 @@ op url https://raw.githubusercontent.com/thewhitehouse007/jtac-uploader/main/jta
 `op url https://raw.githubusercontent.com/thewhitehouse007/jtac-uploader/main/jtac-upload.slax`
 ```
 Enter JTAC Case Number (format: nnnn-nnnn-nnnnnn), or press Enter for none:1111-2222-333444
-Keep local copies of RSI and log archive after upload? (y/n) [n]:
 
 Collecting RSI data, please wait ~10-30mins ...
 RSI collected: /var/tmp/RSI_ROUTER1_2025-10-14_1107.log
@@ -34,7 +34,7 @@ put /var/tmp/RSI_ROUTER1_2025-10-14_1107.log
 put /var/tmp/LOGS_ROUTER1_2025-10-14_1107.tgz
 bye
 ---------------------------------------------
-Keeping local copies of RSI, logs as requested.
+Keeping local copies of RSI & Logs.
 ```
 
 ## NOTES
