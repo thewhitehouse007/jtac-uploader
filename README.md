@@ -11,11 +11,11 @@ This script is designed as a single command to perform the folloing actions
 
 ## Execution
 To run the script, on any Internet connected Juniper Device...
-Execute the following command on the Operational mode prompt (>)
-op url https://raw.githubusercontent.com/thewhitehouse007/jtac-uploader/main/jtac-upload.slax
+Execute the following command on the Operational mode prompt (>):
+
+`op url https://raw.githubusercontent.com/thewhitehouse007/jtac-uploader/main/jtac-upload.slax`
 
 ### Example Console Output:
-`op url https://raw.githubusercontent.com/thewhitehouse007/jtac-uploader/main/jtac-upload.slax`
 ```
 Enter JTAC Case Number (format: nnnn-nnnn-nnnnnn), or press Enter for none:1111-2222-333444
 
